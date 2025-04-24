@@ -1,5 +1,7 @@
 package com.github.tvbox.osc.server;
 
+import static com.github.tvbox.osc.util.RegexUtils.getPattern;
+
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.net.wifi.WifiManager;
@@ -13,6 +15,7 @@ import com.github.tvbox.osc.event.RefreshEvent;
 import com.github.tvbox.osc.event.ServerEvent;
 import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.util.OkGoHelper;
+import com.github.tvbox.osc.util.Proxy;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
@@ -58,6 +61,7 @@ public class RemoteServer extends NanoHTTPD {
     public static int serverPort = 9978;
     private boolean isStarted = false;
     private DataReceiver mDataReceiver;
+    public static String m3u8Content;
     private ArrayList<RequestProcess> getRequestList = new ArrayList<>();
     private ArrayList<RequestProcess> postRequestList = new ArrayList<>();
 
@@ -95,6 +99,33 @@ public class RemoteServer extends NanoHTTPD {
         isStarted = false;
     }
 
+    private Response getProxy(Object[] rs){
+        try {
+            if (rs[0] instanceof NanoHTTPD.Response) return (NanoHTTPD.Response) rs[0];
+            int code = (int) rs[0];
+            String mime = (String) rs[1];
+            InputStream stream = rs[2] != null ? (InputStream) rs[2] : null;
+            Response response = NanoHTTPD.newChunkedResponse(
+                    Response.Status.lookup(code),
+                    mime,
+                    stream
+            );
+            // 添加头部信息
+            if (rs.length >= 4 && rs[3] instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, String> mapHeader = (Map<String, String>) rs[3];
+                if(!mapHeader.isEmpty()){
+                    for (String key : mapHeader.keySet()) {
+                        response.addHeader(key, mapHeader.get(key));
+                    }
+                }
+            }
+            return response;
+        } catch (Throwable th) {
+            return NanoHTTPD.newFixedLengthResponse(Response.Status.INTERNAL_ERROR, NanoHTTPD.MIME_PLAINTEXT, "500");
+        }
+    }
+
     @Override
     public Response serve(IHTTPSession session) {
         EventBus.getDefault().post(new ServerEvent(ServerEvent.SERVER_CONNECTION));
@@ -111,29 +142,14 @@ public class RemoteServer extends NanoHTTPD {
                 }
                 if (fileName.equals("/proxy")) {
                     Map<String, String> params = session.getParms();
+                    params.putAll(session.getHeaders());
                     if (params.containsKey("do")) {
                         Object[] rs = ApiConfig.get().proxyLocal(params);
-                        try {
-                            int code = (int) rs[0];
-                            String mime = (String) rs[1];
-                            InputStream stream = rs[2] != null ? (InputStream) rs[2] : null;
-                            Response response = NanoHTTPD.newChunkedResponse(
-                                    NanoHTTPD.Response.Status.lookup(code),
-                                    mime,
-                                    stream
-                            );
-                            if(rs.length>=4){
-                                HashMap<String, String> mapHeader = (HashMap<String, String>) rs[3];
-                                if(!mapHeader.isEmpty()){
-                                    for (String key : mapHeader.keySet()) {
-                                        response.addHeader(key, mapHeader.get(key));
-                                    }
-                                }
-                            }
-                            return response;
-                        } catch (Throwable th) {
-                            return NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, NanoHTTPD.MIME_PLAINTEXT, "500");
-                        }
+                        return getProxy(rs);
+                    }
+                    if (params.containsKey("go")) {
+                        Object[] rs = Proxy.proxy(params);
+                        return getProxy(rs);
                     }
                 } else if (fileName.startsWith("/file/")) {
                     try {
@@ -175,7 +191,11 @@ public class RemoteServer extends NanoHTTPD {
                     }
                     EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_PUSH_URL, url));
                     return NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, "ok");    
-                }  else if (fileName.startsWith("/dash/")) {
+                }  else if (fileName.startsWith("/proxyM3u8")) {
+//                    com.github.tvbox.osc.util.LOG.i("echo-m3u8:"+m3u8Content);
+                    return NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, m3u8Content);
+                }
+                 else if (fileName.startsWith("/dash/")) {
                     String dashData = App.getInstance().getDashData();
                     try {
                         String data = new String(Base64.decode(dashData, Base64.DEFAULT | Base64.NO_WRAP), "UTF-8");
@@ -196,7 +216,7 @@ public class RemoteServer extends NanoHTTPD {
                         if (hd != null) {
                             // cuke: 修正中文乱码问题
                             if (hd.toLowerCase().contains("multipart/form-data") && !hd.toLowerCase().contains("charset=")) {
-                                Matcher matcher = Pattern.compile("[ |\t]*(boundary[ |\t]*=[ |\t]*['|\"]?[^\"^'^;^,]*['|\"]?)", Pattern.CASE_INSENSITIVE).matcher(hd);
+                                Matcher matcher = getPattern("[ |\t]*(boundary[ |\t]*=[ |\t]*['|\"]?[^\"^'^;^,]*['|\"]?)", Pattern.CASE_INSENSITIVE).matcher(hd);
                                 String boundary = matcher.find() ? matcher.group(1) : null;
                                 if (boundary != null) {
                                     session.getHeaders().put("content-type", "multipart/form-data; charset=utf-8; " + boundary);

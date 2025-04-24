@@ -85,9 +85,11 @@ public class PlayerHelper {
                 renderViewFactory = SurfaceRenderViewFactory.create();
                 break;
         }
-        videoView.setPlayerFactory(playerFactory);
-        videoView.setRenderViewFactory(renderViewFactory);
-        videoView.setScreenScaleType(scale);
+        if(videoView!=null){
+            videoView.setPlayerFactory(playerFactory);
+            videoView.setRenderViewFactory(renderViewFactory);
+            videoView.setScreenScaleType(scale);
+        }
     }
 
     public static void updateCfg(VideoView videoView) {
@@ -279,12 +281,24 @@ public class PlayerHelper {
         return scaleText;
     }
 
-    public static String getDisplaySpeed(long speed) {
+    public static String getDisplaySpeed(long speed,boolean show) {
         if(speed > 1048576)
             return new DecimalFormat("#.00").format(speed / 1048576d) + "Mb/s";
         else if(speed > 1024)
             return (speed / 1024) + "Kb/s";
         else
-            return speed > 0?speed + "B/s":"";
+            return speed > 0?speed + "B/s":(show?"0B/s":"");
+    }
+    public static String getDisplaySpeedBps(long speed, boolean show) {
+        long bitSpeed = speed * 8; // 字节转比特
+        if (bitSpeed >= 1_000_000_000) {
+            return new DecimalFormat("0.00").format(bitSpeed / 1_000_000_000d) + "Gbps";
+        } else if (bitSpeed >= 1_000) {
+            double mbps = bitSpeed / 1_000_000d;
+            DecimalFormat df = mbps < 0.1 ? new DecimalFormat("0.00") : new DecimalFormat("0.0");
+            return df.format(mbps) + "Mbps";
+        }else {
+            return show ? "0bps" : "";
+        }
     }
 }

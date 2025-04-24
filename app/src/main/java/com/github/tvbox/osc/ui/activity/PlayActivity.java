@@ -69,6 +69,7 @@ import com.github.tvbox.osc.util.MD5;
 import com.github.tvbox.osc.util.PlayerHelper;
 import com.github.tvbox.osc.util.VideoParseRuler;
 import com.github.tvbox.osc.util.XWalkUtils;
+import com.github.tvbox.osc.util.parser.SuperParse;
 import com.github.tvbox.osc.util.thunder.Jianpian;
 import com.github.tvbox.osc.util.thunder.Thunder;
 import com.github.tvbox.osc.viewmodel.SourceViewModel;
@@ -93,7 +94,6 @@ import org.xwalk.core.XWalkWebResourceResponse;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
-import java.net.URLEncoder;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -131,6 +131,7 @@ public class PlayActivity extends BaseActivity {
         initView();
         initViewModel();
         initData();
+        Hawk.put(HawkConfig.PLAYER_IS_LIVE,false);
     }
 
     public long getSavedProgress(String url) {
@@ -213,7 +214,18 @@ public class PlayActivity extends BaseActivity {
             @Override
             public void replay(boolean replay) {
                 autoRetryCount = 0;
-                play(replay);
+                if(replay){
+                    play(true);
+                }else {
+                    if(webPlayUrl!=null && !webPlayUrl.isEmpty()) {
+                        stopParse();
+                        initParseLoadFound();
+                        if(mVideoView!=null) mVideoView.release();
+                        goPlayUrl(webPlayUrl,webHeaderMap);
+                    }else {
+                        play(false);
+                    }
+                }
             }
 
             @Override
@@ -239,6 +251,13 @@ public class PlayActivity extends BaseActivity {
             public void prepared() {
                 initSubtitleView();
             }
+
+            @Override
+            public void startPlayUrl(String url, HashMap<String, String> headers) {
+                goPlayUrl(url, headers);
+            }
+            @Override
+            public void setAllowSwitchPlayer(boolean isAllow){allowSwitchPlayer=isAllow;}
         });
         mVideoView.setVideoController(mController);
     }
@@ -290,7 +309,7 @@ public class PlayActivity extends BaseActivity {
                             @Override
                             public void run() {
                                 String zimuUrl = subtitle.getUrl();
-                                LOG.i("Remote Subtitle Url: " + zimuUrl);
+                                LOG.i("echo-Remote Subtitle Url: " + zimuUrl);
                                 setSubtitle(zimuUrl);//设置字幕
                                 if (searchSubtitleDialog != null) {
                                     searchSubtitleDialog.dismiss();
@@ -316,7 +335,7 @@ public class PlayActivity extends BaseActivity {
                         .withChosenListener(new ChooserDialog.Result() {
                             @Override
                             public void onChoosePath(String path, File pathFile) {
-                                LOG.i("Local Subtitle Path: " + path);
+                                LOG.i("echo-Local Subtitle Path: " + path);
                                 setSubtitle(path);//设置字幕
                             }
                         })
@@ -341,9 +360,7 @@ public class PlayActivity extends BaseActivity {
             return;
         }
         TrackInfo trackInfo = null;
-        if (mediaPlayer instanceof IjkMediaPlayer) {
-            trackInfo = ((IjkMediaPlayer)mediaPlayer).getTrackInfo();
-        }
+        trackInfo = ((IjkMediaPlayer) mediaPlayer).getTrackInfo();
         if (trackInfo == null) {
             Toast.makeText(mContext, "没有音轨", Toast.LENGTH_SHORT).show();
             return;
@@ -361,9 +378,7 @@ public class PlayActivity extends BaseActivity {
                     }
                     mediaPlayer.pause();
                     long progress = mediaPlayer.getCurrentPosition();//保存当前进度，ijk 切换轨道 会有快进几秒
-                    if (mediaPlayer instanceof IjkMediaPlayer) {
-                        ((IjkMediaPlayer)mediaPlayer).setTrack(value.index);
-                    }
+                    ((IjkMediaPlayer) mediaPlayer).setTrack(value.index);
                     new Handler().postDelayed(new Runnable() {
                         @Override
                         public void run() {
@@ -379,10 +394,7 @@ public class PlayActivity extends BaseActivity {
 
             @Override
             public String getDisplay(TrackInfoBean val) {
-                String name = val.name.replace("AUDIO,", "");
-                name = name.replace("N/A,", "");
-                name = name.replace(" ", "");
-                return val.index + " : " + val.language + " : " + name;
+                return val.index + " . " + val.language + " : " + val.name;
             }
         }, new DiffUtil.ItemCallback<TrackInfoBean>() {
             @Override
@@ -404,9 +416,7 @@ public class PlayActivity extends BaseActivity {
             return;
         }
         TrackInfo trackInfo = null;
-        if (mediaPlayer instanceof IjkMediaPlayer) {
-            trackInfo = ((IjkMediaPlayer)mediaPlayer).getTrackInfo();
-        }
+        trackInfo = ((IjkMediaPlayer) mediaPlayer).getTrackInfo();
         if (trackInfo == null) {
             Toast.makeText(mContext, "没有内置字幕", Toast.LENGTH_SHORT).show();
             return;
@@ -486,6 +496,7 @@ public class PlayActivity extends BaseActivity {
                 @Override
                 public void run() {
                     if (finish) {
+                        setTip(err, false, true);
                         Toast.makeText(mContext, err, Toast.LENGTH_SHORT).show();
                         finish();
                     } else {
@@ -497,10 +508,25 @@ public class PlayActivity extends BaseActivity {
     }
 
     void playUrl(String url, HashMap<String, String> headers) {
-        LOG.i("playUrl:" + url);
-        if(autoRetryCount>1 && url.contains(".m3u8")){
-            //todo
+        if(!url.startsWith("data:application"))EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_REFRESH, url));//更新播放地址
+        if (!Hawk.get(HawkConfig.M3U8_PURIFY, false)) {
+            goPlayUrl(url,headers);
+            return;
         }
+        if (url.startsWith("http://127.0.0.1") || !url.contains(".m3u8")) {
+            goPlayUrl(url,headers);
+            return;
+        }
+        if(DefaultConfig.noAd(mVodInfo.playFlag)){
+            goPlayUrl(url,headers);
+            return;
+        }
+        LOG.i("echo-playM3u8:" + url);
+        mController.playM3u8(url,headers);
+    }
+    void goPlayUrl(String url, HashMap<String, String> headers) {
+        LOG.i("echo-goPlayUrl:" + url);
+        if(autoRetryCount==0)webPlayUrl=url;
         final String finalUrl = url;
         runOnUiThread(new Runnable() {
             @Override
@@ -556,6 +582,11 @@ public class PlayActivity extends BaseActivity {
             if (trackInfo != null && trackInfo.getSubtitle().size() > 0) {
                 mController.mSubtitleView.hasInternal = true;
             }
+            //默认选中第一个音轨 一般第一个音轨是国语
+            if (trackInfo != null && trackInfo.getAudio().size() > 1) {
+                int firsIndex=trackInfo.getAudio().get(0).index;
+                ((IjkMediaPlayer)(mVideoView.getMediaPlayer())).setTrack(firsIndex);
+            }
             ((IjkMediaPlayer)(mVideoView.getMediaPlayer())).setOnTimedTextListener(new IMediaPlayer.OnTimedTextListener() {
                 @Override
                 public void onTimedText(IMediaPlayer mp, IjkTimedText text) {
@@ -605,6 +636,7 @@ public class PlayActivity extends BaseActivity {
         sourceViewModel.playResult.observe(this, new Observer<JSONObject>() {
             @Override
             public void onChanged(JSONObject info) {
+                webPlayUrl = null;
                 if (info != null) {
                     try {
                         progressKey = info.optString("proKey", null);
@@ -634,7 +666,7 @@ public class PlayActivity extends BaseActivity {
                                             break;
                                     }
                                     String filename = name + (name.toLowerCase().endsWith(ext) ? "" : ext);
-                                    url += "#" + URLEncoder.encode(filename);
+                                    url += "#" + mController.encodeUrl(filename);
                                 }
                                 playSubtitle = url;
                             } catch (Throwable th) {
@@ -648,6 +680,9 @@ public class PlayActivity extends BaseActivity {
                         }
                         String flag = info.optString("flag");
                         String url = info.getString("url");
+                        if(url.startsWith("[")){
+                            url=mController.firstUrlByArray(url);
+                        }
                         HashMap<String, String> headers = null;
                         webUserAgent = null;
                         webHeaderMap = null;
@@ -680,6 +715,7 @@ public class PlayActivity extends BaseActivity {
                     } catch (Throwable th) {
                     }
                 } else {
+//                    setTip("获取播放信息错误", false, true);
                     errorWithRetry("获取播放信息错误", true);
                 }
             }
@@ -749,6 +785,26 @@ public class PlayActivity extends BaseActivity {
             }
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (event != null ) {
+            if (mController.onKeyDown(keyCode,event)) {
+                return true;
+            }
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (event != null ) {
+            if (mController.onKeyUp(keyCode,event)) {
+                return true;
+            }
+        }
+        return super.onKeyUp(keyCode, event);
     }
 
     @Override
@@ -824,15 +880,47 @@ public class PlayActivity extends BaseActivity {
     }
 
     private int autoRetryCount = 0;
+    private long lastRetryTime = 0;  // 记录上次调用时间（毫秒）
+    private boolean allowSwitchPlayer = true;
 
     boolean autoRetry() {
-        if (loadFoundVideoUrls != null && loadFoundVideoUrls.size() > 0) {
+        long currentTime = System.currentTimeMillis();
+        // 如果距离上次重试超过 10 秒（10000 毫秒），重置重试次数
+        if (currentTime - lastRetryTime > 60_000) {
+            LOG.i("echo-reset-autoRetryCount");
+            autoRetryCount = 0;
+            allowSwitchPlayer = false;
+        }
+        lastRetryTime = currentTime;  // 更新上次调用时间
+        if (loadFoundVideoUrls != null && !loadFoundVideoUrls.isEmpty()) {
             autoRetryFromLoadFoundVideoUrls();
             return true;
         }
-        if (autoRetryCount < 1) {
-            autoRetryCount++;
-            play(false);
+
+        if (autoRetryCount < 2) {
+            if(autoRetryCount==1){
+                //第二次重试时重新调用接口
+                play(false);
+                autoRetryCount++;
+            }else {
+                //第一次重试直接带着原地址继续播放
+                if(webPlayUrl!=null){
+                    if(allowSwitchPlayer){
+                        //切换播放器不占用重试次数
+                        if(mController.switchPlayer())autoRetryCount++;
+                    }else {
+                        autoRetryCount++;
+                        allowSwitchPlayer=true;
+                    }
+                    stopParse();
+                    initParseLoadFound();
+                    if(mVideoView!=null) mVideoView.release();
+                    playUrl(webPlayUrl, webHeaderMap);
+                }else {
+                    play(false);
+                    autoRetryCount++;
+                }
+            }
             return true;
         } else {
             autoRetryCount = 0;
@@ -921,7 +1009,8 @@ public class PlayActivity extends BaseActivity {
     private String parseFlag;
     private String webUrl;
     private String webUserAgent;
-    private Map<String, String > webHeaderMap;
+    private HashMap<String, String > webHeaderMap;
+    private String webPlayUrl;
 
     private void initParse(String flag, boolean useParse, String playUrl, final String url) {
         parseFlag = flag;
@@ -998,18 +1087,14 @@ public class PlayActivity extends BaseActivity {
 
     ExecutorService parseThreadPool;
 
-    private String encodeUrl(String url) {
-        try {
-            return URLEncoder.encode(url, "UTF-8");
-        } catch (Exception e) {
-            return url;
-        }
-    }
 
     private void doParse(ParseBean pb) {
         stopParse();
         initParseLoadFound();
-        if (pb.getType() == 0) {
+        if (pb.getType() == 4) {
+            parseMix(pb,true);
+        }
+        else if (pb.getType() == 0) {
             setTip("正在嗅探播放地址", true, false);
             mHandler.removeMessages(100);
             mHandler.sendEmptyMessageDelayed(100, 20 * 1000);
@@ -1053,7 +1138,7 @@ public class PlayActivity extends BaseActivity {
             } catch (Throwable e) {
                 e.printStackTrace();
             }
-            OkGo.<String>get(pb.getUrl() + encodeUrl(webUrl))
+            OkGo.<String>get(pb.getUrl() + mController.encodeUrl(webUrl))
                     .tag("json_jx")
                     .headers(reqHeaders)
                     .execute(new AbsCallback<String>() {
@@ -1154,24 +1239,61 @@ public class PlayActivity extends BaseActivity {
                 }
             });
         } else if (pb.getType() == 3) { // json 聚合
-            setTip("正在解析播放地址", true, false);
-            parseThreadPool = Executors.newSingleThreadExecutor();
-            LinkedHashMap<String, HashMap<String, String>> jxs = new LinkedHashMap<>();
-            String extendName = "";
-            for (ParseBean p : ApiConfig.get().getParseBeanList()) {
-                HashMap<String, String> data = new HashMap<String, String>();
-                data.put("url", p.getUrl());
-                if (p.getUrl().equals(pb.getUrl())) {
-                    extendName = p.getName();
-                }
-                data.put("type", p.getType() + "");
-                data.put("ext", p.getExt());
-                jxs.put(p.getName(), data);
+            parseMix(pb,false);
+        }
+    }
+
+    private void parseMix(ParseBean pb,boolean isSuper){
+        setTip("正在解析播放地址", true, false);
+        parseThreadPool = Executors.newSingleThreadExecutor();
+        LinkedHashMap<String, HashMap<String, String>> jxs = new LinkedHashMap<>();
+        String extendName = "";
+        for (ParseBean p : ApiConfig.get().getParseBeanList()) {
+            HashMap<String, String> data = new HashMap<String, String>();
+            data.put("url", p.getUrl());
+            if (p.getUrl().equals(pb.getUrl())) {
+                extendName = p.getName();
             }
-            String finalExtendName = extendName;
-            parseThreadPool.execute(new Runnable() {
-                @Override
-                public void run() {
+            data.put("type", p.getType() + "");
+            data.put("ext", p.getExt());
+            jxs.put(p.getName(), data);
+        }
+        String finalExtendName = extendName;
+        parseThreadPool.execute(new Runnable() {
+            @Override
+            public void run() {
+                if(isSuper){
+                    JSONObject rs = SuperParse.parse(jxs,parseFlag+"123",webUrl);
+                    if (!rs.has("url") || rs.optString("url").isEmpty()) {
+                        setTip("解析错误", false, true);
+                    } else {
+                        if (rs.has("parse") && rs.optInt("parse", 0) == 1) {
+                            if (rs.has("ua")) {
+                                webUserAgent = rs.optString("ua").trim();
+                            }
+                            setTip("超级解析中", true, false);
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    String mixParseUrl = DefaultConfig.checkReplaceProxy(rs.optString("url", ""));
+                                    stopParse();
+                                    mHandler.removeMessages(100);
+                                    mHandler.sendEmptyMessageDelayed(100, 20 * 1000);
+                                    loadWebView(mixParseUrl);
+                                }
+                            });
+                            parseThreadPool.execute(new Runnable() {
+                                @Override
+                                public void run() {
+                                    JSONObject res = SuperParse.doJsonJx(webUrl);
+                                    rsJsonJx(res, true);
+                                }
+                            });
+                        } else {
+                            rsJsonJx(rs,false);
+                        }
+                    }
+                }else {
                     JSONObject rs = ApiConfig.get().jsonExtMix(parseFlag + "111", pb.getUrl(), finalExtendName, jxs, webUrl);
                     if (rs == null || !rs.has("url") || rs.optString("url").isEmpty()) {
                         setTip("解析错误", false, true);
@@ -1192,38 +1314,45 @@ public class PlayActivity extends BaseActivity {
                                 }
                             });
                         } else {
-                            HashMap<String, String> headers = null;
-                            if (rs.has("header")) {
-                                try {
-                                    JSONObject hds = rs.getJSONObject("header");
-                                    Iterator<String> keys = hds.keys();
-                                    while (keys.hasNext()) {
-                                        String key = keys.next();
-                                        if (headers == null) {
-                                            headers = new HashMap<>();
-                                        }
-                                        headers.put(key, hds.getString(key));
-                                    }
-                                } catch (Throwable th) {
-
-                                }
-                            }
-                            if (rs.has("jxFrom")) {
-                                runOnUiThread(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        Toast.makeText(mContext, "解析来自:" + rs.optString("jxFrom"), Toast.LENGTH_SHORT).show();
-                                    }
-                                });
-                            }
-                            playUrl(rs.optString("url", ""), headers);
+                           rsJsonJx(rs,false);
                         }
                     }
                 }
+            }
+        });
+    }
+    private void rsJsonJx(JSONObject rs,boolean isSuper)
+    {
+        if(isSuper){
+            if(rs==null || !rs.has("url"))return;
+            stopLoadWebView(false);
+        }
+        HashMap<String, String> headers = null;
+        if (rs.has("header")) {
+            try {
+                JSONObject hds = rs.getJSONObject("header");
+                Iterator<String> keys = hds.keys();
+                while (keys.hasNext()) {
+                    String key = keys.next();
+                    if (headers == null) {
+                        headers = new HashMap<>();
+                    }
+                    headers.put(key, hds.getString(key));
+                }
+            } catch (Throwable th) {
+
+            }
+        }
+        if (rs.has("jxFrom")) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Toast.makeText(mContext, "解析来自:" + rs.optString("jxFrom"), Toast.LENGTH_SHORT).show();
+                }
             });
         }
+        playUrl(rs.optString("url", ""), headers);
     }
-
     // webview
     private XWalkView mXwalkWebView;
     private XWalkWebClient mX5WebClient;
@@ -1319,7 +1448,7 @@ public class PlayActivity extends BaseActivity {
                     mXwalkWebView.stopLoading();
                     mXwalkWebView.loadUrl("about:blank");
                     if (destroy) {
-//                        mXwalkWebView.clearCache(true);
+                        mXwalkWebView.clearCache(true);
                         mXwalkWebView.removeAllViews();
                         mXwalkWebView.onDestroy();
                         mXwalkWebView = null;
@@ -1329,7 +1458,7 @@ public class PlayActivity extends BaseActivity {
                     mSysWebView.stopLoading();
                     mSysWebView.loadUrl("about:blank");
                     if (destroy) {
-//                        mSysWebView.clearCache(true);
+                        mSysWebView.clearCache(true);
                         mSysWebView.removeAllViews();
                         mSysWebView.destroy();
                         mSysWebView = null;
@@ -1488,18 +1617,9 @@ public class PlayActivity extends BaseActivity {
         @Override
         public void onPageFinished(WebView view, String url) {
             super.onPageFinished(view,url);
-            String click=sourceBean.getClickSelector();
-            LOG.i("onPageFinished url:" + url);
-            if(!click.isEmpty()){
-                String selector;
-                if(click.contains(";")){
-                    if(!url.contains(click.split(";")[0]))return;
-                    selector=click.split(";")[1];
-                }else {
-                    selector=click.trim();
-                }
-                String js="$(\""+ selector+"\").click();";
-                mSysWebView.loadUrl("javascript:"+js);
+            LOG.i("echo-onPageFinished url:" + url);
+            if(!url.equals("about:blank")){
+                mController.evaluateScript(sourceBean,url,view,null);
             }
         }
 
@@ -1529,13 +1649,14 @@ public class PlayActivity extends BaseActivity {
                 if (checkVideoFormat(url)) {
                     loadFoundVideoUrls.add(url);
                     loadFoundVideoUrlsHeader.put(url, headers);
-                    LOG.i("loadFoundVideoUrl:" + url );
+                    LOG.i("echo-loadFoundVideoUrl:" + url );
                     if (loadFoundCount.incrementAndGet() == 1) {
                         url = loadFoundVideoUrls.poll();
                         mHandler.removeMessages(100);
                         String cookie = CookieManager.getInstance().getCookie(url);
                         if(!TextUtils.isEmpty(cookie))headers.put("Cookie", " " + cookie);//携带cookie
                         playUrl(url, headers);
+                        SuperParse.stopJsonJx();
                         stopLoadWebView(false);
                     }
                 }
@@ -1557,7 +1678,7 @@ public class PlayActivity extends BaseActivity {
         @TargetApi(Build.VERSION_CODES.LOLLIPOP)
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
             String url = request.getUrl().toString();
-            LOG.i("shouldInterceptRequest url:" + url);
+            LOG.i("echo-shouldInterceptRequest url:" + url);
             HashMap<String, String> webHeaders = new HashMap<>();
             Map<String, String> hds = request.getRequestHeaders();
             if (hds != null && hds.keySet().size() > 0) {
@@ -1665,6 +1786,10 @@ public class PlayActivity extends BaseActivity {
         @Override
         public void onLoadFinished(XWalkView view, String url) {
             super.onLoadFinished(view, url);
+            LOG.i("echo-onPageFinished url:" + url);
+            if(!url.equals("about:blank")){
+                mController.evaluateScript(sourceBean,url,null,view);
+            }
         }
 
         @Override
@@ -1675,7 +1800,7 @@ public class PlayActivity extends BaseActivity {
         @Override
         public XWalkWebResourceResponse shouldInterceptLoadRequest(XWalkView view, XWalkWebResourceRequest request) {
             String url = request.getUrl().toString();
-            LOG.i("shouldInterceptLoadRequest url:" + url);
+            LOG.i("echo-shouldInterceptLoadRequest url:" + url);
             // suppress favicon requests as we don't display them anywhere
             if (url.endsWith("/favicon.ico")) {
                 if (url.startsWith("http://127.0.0.1")) {
@@ -1712,13 +1837,14 @@ public class PlayActivity extends BaseActivity {
                     }
                     loadFoundVideoUrls.add(url);
                     loadFoundVideoUrlsHeader.put(url, webHeaders);
-                    LOG.i("loadFoundVideoUrl:" + url );
+                    LOG.i("echo-loadFoundVideoUrl:" + url );
                     if (loadFoundCount.incrementAndGet() == 1) {
                         mHandler.removeMessages(100);
                         url = loadFoundVideoUrls.poll();
                         String cookie = CookieManager.getInstance().getCookie(url);
                         if(!TextUtils.isEmpty(cookie))webHeaders.put("Cookie", " " + cookie);//携带cookie
                         playUrl(url, webHeaders);
+                        SuperParse.stopJsonJx();
                         stopLoadWebView(false);
                     }
                 }
