@@ -74,6 +74,7 @@ import xyz.doikki.videoplayer.player.VideoView;
 
 import static xyz.doikki.videoplayer.util.PlayerUtils.stringForTime;
 import static xyz.doikki.videoplayer.util.PlayerUtils.seconds2Time;
+import static xyz.doikki.videoplayer.util.PlayerUtils.safeTimeMs;
 
 public class VodController extends BaseController {
     public VodController(@NonNull @NotNull Context context) {
@@ -91,6 +92,7 @@ public class VodController extends BaseController {
                         break;
                     }
                     case 1002: { // 显示底部菜单
+                        updateDanmuSearchUiBtn();
                         mBottomRoot.setVisibility(VISIBLE);
                         mTopRoot1.setVisibility(VISIBLE);
                         mTopRoot2.setVisibility(VISIBLE);
@@ -115,6 +117,10 @@ public class VodController extends BaseController {
                             net_play_speed.setVisibility(VISIBLE);
                         }
                         backBtn.setVisibility(INVISIBLE);
+                        mHandler.removeCallbacks(lockRunnable);
+                        if (mLockView != null) {
+                            mLockView.setVisibility(INVISIBLE);
+                        }
                         break;
                     }
                     case 1004: { // 设置速度
@@ -169,6 +175,8 @@ public class VodController extends BaseController {
     public SimpleSubtitleView mSubtitleView;
     TextView mZimuBtn;
     TextView mAudioTrackBtn;
+    TextView mDanmuSettingBtn;
+    TextView mDanmuSearchUiBtn;
     public TextView mLandscapePortraitBtn;
     private View backBtn;//返回键
     private boolean isClickBackBtn;
@@ -176,9 +184,11 @@ public class VodController extends BaseController {
     TextView mScreenDisplay; //增加屏显开关
     LinearLayout tv_screen_display; //增加屏显布局
     TextView net_play_speed;
+    private boolean hasDanmu = false;
 
     LockRunnable lockRunnable = new LockRunnable();
     private boolean isLock = false;
+    private boolean previewMode = false;
     Handler myHandle;
     Runnable myRunnable;
     int myHandleSeconds = 10000;//闲置多少毫秒秒关闭底栏  默认6秒
@@ -208,9 +218,26 @@ public class VodController extends BaseController {
     };
     
     private void showLockView() {
+        if (previewMode) {
+            mHandler.removeCallbacks(lockRunnable);
+            if (mLockView != null) {
+                mLockView.setVisibility(INVISIBLE);
+            }
+            return;
+        }
         mLockView.setVisibility(ScreenUtils.isTv(getContext()) ? INVISIBLE : VISIBLE);
         mHandler.removeCallbacks(lockRunnable);
-        mHandler.postDelayed(lockRunnable, 3000);
+        if (isLock) {
+            mHandler.postDelayed(lockRunnable, 3000);
+        }
+    }
+
+    public void setPreviewMode(boolean previewMode) {
+        this.previewMode = previewMode;
+        mHandler.removeCallbacks(lockRunnable);
+        if (mLockView != null) {
+            mLockView.setVisibility(INVISIBLE);
+        }
     }
 
     @Override
@@ -251,6 +278,9 @@ public class VodController extends BaseController {
         mSubtitleView = findViewById(R.id.subtitle_view);
         mZimuBtn = findViewById(R.id.zimu_select);
         mAudioTrackBtn = findViewById(R.id.audio_track_select);
+        mDanmuSettingBtn = findViewById(R.id.danmu_setting);
+        mDanmuSearchUiBtn = findViewById(R.id.danmu_search_ui);
+        updateDanmuSearchUiBtn();
         mLandscapePortraitBtn = findViewById(R.id.landscape_portrait);
         backBtn = findViewById(R.id.tv_back);
         seekTime = findViewById(R.id.tv_seek_time);
@@ -282,6 +312,9 @@ public class VodController extends BaseController {
         rootView.setOnTouchListener(new OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
+                if (previewMode) {
+                    return false;
+                }
                 if (isLock) {
                     if (event.getAction() == MotionEvent.ACTION_UP) {
                         showLockView();
@@ -336,7 +369,7 @@ public class VodController extends BaseController {
                 long duration = mControlWrapper.getDuration();
                 long newPosition = (duration * progress) / seekBar.getMax();
                 if (mCurrentTime != null)
-                    mCurrentTime.setText(stringForTime((int) newPosition));
+                    mCurrentTime.setText(stringForTime(safeTimeMs(newPosition)));
             }
 
             @Override
@@ -352,7 +385,7 @@ public class VodController extends BaseController {
                 myHandle.postDelayed(myRunnable, myHandleSeconds);
                 long duration = mControlWrapper.getDuration();
                 long newPosition = (duration * seekBar.getProgress()) / seekBar.getMax();
-                mControlWrapper.seekTo((int) newPosition);
+                mControlWrapper.seekTo(newPosition);
                 mIsDragging = false;
                 mControlWrapper.startProgress();
                 mControlWrapper.startFadeOut();
@@ -584,8 +617,8 @@ public class VodController extends BaseController {
                 myHandle.removeCallbacks(myRunnable);
                 myHandle.postDelayed(myRunnable, myHandleSeconds);
                 try {
-                    int current = (int) mControlWrapper.getCurrentPosition();
-                    int duration = (int) mControlWrapper.getDuration();
+                    int current = safeTimeMs(mControlWrapper.getCurrentPosition());
+                    int duration = safeTimeMs(mControlWrapper.getDuration());
                     if (current > duration / 2) return;
                     mPlayerConfig.put("st",current/1000);
                     updatePlayerCfgView();
@@ -614,8 +647,8 @@ public class VodController extends BaseController {
                 myHandle.removeCallbacks(myRunnable);
                 myHandle.postDelayed(myRunnable, myHandleSeconds);
                 try {
-                    int current = (int) mControlWrapper.getCurrentPosition();
-                    int duration = (int) mControlWrapper.getDuration();
+                    int current = safeTimeMs(mControlWrapper.getCurrentPosition());
+                    int duration = safeTimeMs(mControlWrapper.getDuration());
                     if (current < duration / 2) return;
                     mPlayerConfig.put("et", (duration - current)/1000);
                     updatePlayerCfgView();
@@ -664,6 +697,28 @@ public class VodController extends BaseController {
                 FastClickCheckUtil.check(view);
                 listener.selectAudioTrack();
                 hideBottom();
+            }
+        });
+        mDanmuSettingBtn.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                FastClickCheckUtil.check(view);
+                listener.showDanmuSetting();
+            }
+        });
+        mDanmuSearchUiBtn.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                listener.searchDanmuUi(false);
+                hideBottom();
+            }
+        });
+        mDanmuSearchUiBtn.setOnLongClickListener(new OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View view) {
+                listener.searchDanmuUi(true);
+                hideBottom();
+                return true;
             }
         });
         mLandscapePortraitBtn.setOnClickListener(new OnClickListener() {
@@ -759,9 +814,9 @@ public class VodController extends BaseController {
     void updatePlayerCfgView() {
         try {
             int playerType = mPlayerConfig.getInt("pl");
-            mPlayerBtn.setText(PlayerHelper.getPlayerName(playerType));
+            mPlayerBtn.setText(getPlayerShortName(playerType));
             mPlayerScaleBtn.setText(PlayerHelper.getScaleName(mPlayerConfig.getInt("sc")));
-            mPlayerIJKBtn.setText(mPlayerConfig.getString("ijk"));
+            mPlayerIJKBtn.setText(getCodecShortName(mPlayerConfig.getString("ijk")));
             mPlayerIJKBtn.setVisibility(playerType == 1 ? VISIBLE : GONE);
             mPlayerScaleBtn.setText(PlayerHelper.getScaleName(mPlayerConfig.getInt("sc")));
             mPlayerSpeedBtn.setText("x" + mPlayerConfig.getDouble("sp"));
@@ -771,6 +826,21 @@ public class VodController extends BaseController {
         } catch (JSONException e) {
             e.printStackTrace();
         }
+    }
+
+    private String getPlayerShortName(int playerType) {
+        String playerName = PlayerHelper.getPlayerName(playerType);
+        return playerName;
+    }
+
+    private String getCodecShortName(String codecName) {
+        if ("硬解码".equals(codecName)) {
+            return "硬解";
+        }
+        if ("软解码".equals(codecName)) {
+            return "软解";
+        }
+        return codecName;
     }
 
     public void setTitle(String playTitleInfo) {
@@ -786,6 +856,21 @@ public class VodController extends BaseController {
         skipEnd = true;
         mHandler.removeMessages(1004);
         mHandler.sendEmptyMessageDelayed(1004, 100);
+    }
+
+    public void setHasDanmu(boolean hasDanmu) {
+        this.hasDanmu = hasDanmu;
+        updateDanmuBtn();
+    }
+
+    public void updateDanmuBtn() {
+        if (mDanmuSettingBtn == null) return;
+        mDanmuSettingBtn.setVisibility(hasDanmu ? VISIBLE : GONE);
+    }
+
+    public void updateDanmuSearchUiBtn() {
+        if (mDanmuSearchUiBtn == null) return;
+        mDanmuSearchUiBtn.setVisibility(ApiConfig.get().hasDanmuSearchUi() ? VISIBLE : GONE);
     }
 
     public interface VodControlListener {
@@ -806,6 +891,10 @@ public class VodController extends BaseController {
         void selectSubtitle();
 
         void selectAudioTrack();
+
+        void showDanmuSetting();
+
+        void searchDanmuUi(boolean longClick);
 
         void startPlayUrl(String url, HashMap<String, String> headers);
 
@@ -874,7 +963,7 @@ public class VodController extends BaseController {
         simSlideOffset = 0;
     }
     public void tvSlideStart(int dir) {
-        int duration = (int) mControlWrapper.getDuration();
+        int duration = safeTimeMs(mControlWrapper.getDuration());
         if (duration <= 0)
             return;
 
@@ -894,7 +983,7 @@ public class VodController extends BaseController {
             }
         }
         lastSlideTime = currentTime;
-        int currentPosition = (int) mControlWrapper.getCurrentPosition();
+        int currentPosition = safeTimeMs(mControlWrapper.getCurrentPosition());
         int position = (int) (currentPosition + simSlideOffset);
         if (position > duration) position = duration;
         if (position < 0) position = 0;
@@ -1221,27 +1310,24 @@ public class VodController extends BaseController {
         }
     }
 
-    private static int switchPlayerCount=0;
     public boolean switchPlayer(){
         try {
             int playerType= mPlayerConfig.getInt("pl");
             int p_type = (playerType == 1) ? playerType + 1 : (playerType == 2) ? playerType - 1 : playerType;
             if (p_type != playerType) {
-                Toast.makeText(getContext(), "切换到"+(p_type==1?"IJK":"EXO")+"播放器重试", Toast.LENGTH_SHORT).show();
+                LOG.i("echo-switchPlayer: " + playerType + " -> " + p_type);
+//                Toast.makeText(getContext(), "切换到"+(p_type==1?"IJK":"EXO"), Toast.LENGTH_SHORT).show();
                 mPlayerConfig.put("pl", p_type);
                 updatePlayerCfgView();
                 listener.updatePlayerCfg();
             }else {
+                LOG.i("echo-switchPlayer: skip unsupported playerType=" + playerType);
                 return true;
             }
         }catch (Exception e){
+            LOG.i("echo-switchPlayer error: " + e.getMessage());
             return true;
         }
-        if(switchPlayerCount==1) {
-            switchPlayerCount=0;
-            return true;
-        }
-        switchPlayerCount++;
         return false;
     }
 

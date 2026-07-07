@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.ui.dialog;
 
+import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
 import android.os.Build;
@@ -30,10 +31,23 @@ public class BaseDialog extends Dialog {
 
     @Override
     public void show() {
+        if (isContextInvalid()) {
+            return;
+        }
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
         super.show();
         hideSysBar();
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+    }
+
+    private boolean isContextInvalid() {
+        Context context = getContext();
+        if (!(context instanceof Activity)) {
+            return false;
+        }
+        Activity activity = (Activity) context;
+        return activity.isFinishing()
+                || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && activity.isDestroyed());
     }
 
     private void hideSysBar() {
@@ -44,7 +58,6 @@ public class BaseDialog extends Dialog {
             uiOptions |= View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
             uiOptions |= View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
             uiOptions |= View.SYSTEM_UI_FLAG_FULLSCREEN;
-            uiOptions |= View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
             getWindow().getDecorView().setSystemUiVisibility(uiOptions);
         }
     }

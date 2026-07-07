@@ -2,8 +2,15 @@ package com.github.tvbox.osc.ui.fragment;
 
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.DocumentsContract;
+import android.provider.OpenableColumns;
+import android.os.Handler;
 import android.view.View;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -12,13 +19,14 @@ import androidx.recyclerview.widget.DiffUtil;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.api.ApiConfig;
+import com.github.tvbox.osc.api.DanmakuApi;
 import com.github.tvbox.osc.base.BaseActivity;
 import com.github.tvbox.osc.base.BaseLazyFragment;
 import com.github.tvbox.osc.bean.IJKCode;
 import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.event.RefreshEvent;
 import com.github.tvbox.osc.player.thirdparty.RemoteTVBox;
-import com.github.tvbox.osc.ui.activity.HomeActivity;
+import com.github.tvbox.osc.ui.activity.LocalFileActivity;
 import com.github.tvbox.osc.ui.activity.SettingActivity;
 import com.github.tvbox.osc.ui.adapter.ApiHistoryDialogAdapter;
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
@@ -26,9 +34,11 @@ import com.github.tvbox.osc.ui.dialog.AboutDialog;
 import com.github.tvbox.osc.ui.dialog.ApiDialog;
 import com.github.tvbox.osc.ui.dialog.ApiHistoryDialog;
 import com.github.tvbox.osc.ui.dialog.BackupDialog;
+import com.github.tvbox.osc.ui.dialog.DanmuApiDialog;
 import com.github.tvbox.osc.ui.dialog.SearchRemoteTvDialog;
 import com.github.tvbox.osc.ui.dialog.SelectDialog;
 import com.github.tvbox.osc.ui.dialog.XWalkInitDialog;
+import com.github.tvbox.osc.util.DanmuHelper;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.util.HawkConfig;
@@ -41,11 +51,16 @@ import com.lzy.okgo.callback.FileCallback;
 import com.lzy.okgo.model.Progress;
 import com.lzy.okgo.model.Response;
 import com.orhanobut.hawk.Hawk;
+import com.hjq.permissions.OnPermissionCallback;
+import com.hjq.permissions.Permission;
+import com.hjq.permissions.XXPermissions;
 
 import org.greenrobot.eventbus.EventBus;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -58,6 +73,7 @@ import tv.danmaku.ijk.media.player.IjkMediaPlayer;
  * @description:
  */
 public class ModelSettingFragment extends BaseLazyFragment {
+    private static final int REQUEST_LOCAL_CONFIG = 1001;
     private TextView tvDebugOpen;
     private TextView tvMediaCodec;
     private TextView tvParseWebView;
@@ -65,6 +81,10 @@ public class ModelSettingFragment extends BaseLazyFragment {
     private TextView tvRender;
     private TextView tvScale;
     private TextView tvApi;
+    private TextView tvApiLine;
+    private View llApi;
+    private View llApiHistory;
+    private View llApiLine;
     private TextView tvHomeApi;
     private TextView tvDns;
     private TextView tvHomeRec;
@@ -73,9 +93,14 @@ public class ModelSettingFragment extends BaseLazyFragment {
     private TextView tvShowPreviewText;
     private TextView tvFastSearchText;
     private TextView tvm3u8AdText;
+    private TextView tvAutoSwitchLineText;
     private TextView tvRecStyleText;
     private TextView tvIjkCachePlay;
     private TextView tvHomeDefaultShow;
+    private ApiDialog apiDialog;
+    private boolean selectLocalLive;
+    private TextView tvDanmuOpenText;
+    private TextView tvDanmuApiText;
 
     public static ModelSettingFragment newInstance() {
         return new ModelSettingFragment().setArguments();
@@ -93,9 +118,15 @@ public class ModelSettingFragment extends BaseLazyFragment {
     @Override
     protected void init() {
         tvFastSearchText = findViewById(R.id.showFastSearchText);
-        tvFastSearchText.setText(Hawk.get(HawkConfig.FAST_SEARCH_MODE, false) ? "开启" : "关闭");
+        tvFastSearchText.setText(Hawk.get(HawkConfig.FAST_SEARCH_MODE, true) ? "开启" : "关闭");
         tvm3u8AdText = findViewById(R.id.m3u8AdText);
         tvm3u8AdText.setText(Hawk.get(HawkConfig.M3U8_PURIFY, false) ? "开启" : "关闭");
+        tvDanmuOpenText = findViewById(R.id.danmuOpenText);
+        tvDanmuOpenText.setText(DanmuHelper.isOpen() ? "开启" : "关闭");
+        tvDanmuApiText = findViewById(R.id.danmuApiText);
+        refreshDanmuApiText();
+        tvAutoSwitchLineText = findViewById(R.id.autoSwitchLineText);
+        tvAutoSwitchLineText.setText(Hawk.get(HawkConfig.AUTO_SWITCH_LINE, true) ? "开启" : "关闭");
         tvRecStyleText = findViewById(R.id.showRecStyleText);
         tvRecStyleText.setText(Hawk.get(HawkConfig.HOME_REC_STYLE, false) ? "是" : "否");
         tvShowPreviewText = findViewById(R.id.showPreviewText);
@@ -106,7 +137,11 @@ public class ModelSettingFragment extends BaseLazyFragment {
         tvPlay = findViewById(R.id.tvPlay);
         tvRender = findViewById(R.id.tvRenderType);
         tvScale = findViewById(R.id.tvScaleType);
+        llApi = findViewById(R.id.llApi);
+        llApiHistory = findViewById(R.id.llApiHistory);
+        llApiLine = findViewById(R.id.llApiLine);
         tvApi = findViewById(R.id.tvApi);
+        tvApiLine = findViewById(R.id.tvApiLine);
         tvHomeApi = findViewById(R.id.tvHomeApi);
         tvDns = findViewById(R.id.tvDns);
         tvHomeRec = findViewById(R.id.tvHomeRec);
@@ -117,9 +152,10 @@ public class ModelSettingFragment extends BaseLazyFragment {
         tvDebugOpen.setText(Hawk.get(HawkConfig.DEBUG_OPEN, false) ? "已打开" : "已关闭");
         tvParseWebView.setText(Hawk.get(HawkConfig.PARSE_WEBVIEW, true) ? "系统自带" : "XWalkView");
         tvApi.setText(Hawk.get(HawkConfig.API_URL, ""));
+        refreshApiLineText();
 
         tvDns.setText(OkGoHelper.dnsHttpsList.get(Hawk.get(HawkConfig.DOH_URL, 0)));
-        tvHomeRec.setText(getHomeRecName(Hawk.get(HawkConfig.HOME_REC, 0)));
+        tvHomeRec.setText(getHomeRecName(Hawk.get(HawkConfig.HOME_REC, HawkConfig.DEFAULT_HOME_REC)));
         tvHistoryNum.setText(HistoryHelper.getHistoryNumName(Hawk.get(HawkConfig.HISTORY_NUM, 0)));
         tvSearchView.setText(getSearchView(Hawk.get(HawkConfig.SEARCH_VIEW, 0)));
         tvHomeApi.setText(ApiConfig.get().getHomeSourceBean().getName());
@@ -218,15 +254,10 @@ public class ModelSettingFragment extends BaseLazyFragment {
                     dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<SourceBean>() {
                         @Override
                         public void click(SourceBean value, int pos) {
+                            dialog.dismiss();
                             ApiConfig.get().setSourceBean(value);
                             tvHomeApi.setText(ApiConfig.get().getHomeSourceBean().getName());
-
-                            Intent intent =new Intent(mContext, HomeActivity.class);
-                            intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                            Bundle bundle = new Bundle();
-                            bundle.putBoolean("useCache", true);
-                            intent.putExtras(bundle);
-                            startActivity(intent);
+                            EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_HOME_SOURCE_CHANGE));
                         }
 
                         @Override
@@ -263,6 +294,7 @@ public class ModelSettingFragment extends BaseLazyFragment {
                         Hawk.put(HawkConfig.DOH_URL, pos);
 //                        String url = OkGoHelper.getDohUrl(pos);
 //                        OkGoHelper.dnsOverHttps.setUrl(url.isEmpty() ? null : HttpUrl.get(url));
+                        OkGoHelper.reloadDns();
                         IjkMediaPlayer.toggleDotPort(pos > 0);
                     }
 
@@ -288,13 +320,27 @@ public class ModelSettingFragment extends BaseLazyFragment {
             @Override
             public void onClick(View v) {
                 FastClickCheckUtil.check(v);
-                ApiDialog dialog = new ApiDialog(mActivity);
+                apiDialog = new ApiDialog(mActivity);
+                ApiDialog dialog = apiDialog;
                 EventBus.getDefault().register(dialog);
                 dialog.setOnListener(new ApiDialog.OnListener() {
                     @Override
                     public void onchange(String api) {
+                        String oldApi = Hawk.get(HawkConfig.API_URL, "");
                         Hawk.put(HawkConfig.API_URL, api);
+                        if (!HistoryHelper.isApiLineHistory(api)) {
+                            HistoryHelper.clearApiLineList();
+                        }
                         tvApi.setText(api);
+                        refreshApiLineText();
+                        if (!oldApi.equals(api)) {
+                            restartAppAfterConfigChanged();
+                        }
+                    }
+
+                    @Override
+                    public void onLocalConfig(boolean live) {
+                        openLocalConfig(live);
                     }
                 });
                 dialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
@@ -302,6 +348,7 @@ public class ModelSettingFragment extends BaseLazyFragment {
                     public void onDismiss(DialogInterface dialog) {
                         ((BaseActivity) mActivity).hideSysBar();
                         EventBus.getDefault().unregister(dialog);
+                        apiDialog = null;
                     }
                 });
                 dialog.show();
@@ -323,11 +370,19 @@ public class ModelSettingFragment extends BaseLazyFragment {
                 dialog.setAdapter(new ApiHistoryDialogAdapter.SelectDialogInterface() {
                     @Override
                     public void click(String value) {
+                        String oldApi = Hawk.get(HawkConfig.API_URL, "");
+                        if (!HistoryHelper.isApiLineHistory(value)) {
+                            HistoryHelper.clearApiLineList();
+                        }
                         Hawk.put(HawkConfig.API_URL, value);
                         Hawk.put(HawkConfig.LIVE_API_URL, value);
                         HistoryHelper.setLiveApiHistory(value);
                         tvApi.setText(value);
+                        refreshApiLineText();
                         dialog.dismiss();
+                        if (!oldApi.equals(value)) {
+                            restartAppAfterConfigChanged();
+                        }
                     }
 
                     @Override
@@ -335,6 +390,52 @@ public class ModelSettingFragment extends BaseLazyFragment {
                         Hawk.put(HawkConfig.API_HISTORY, data);
                     }
                 }, history, idx);
+                dialog.show();
+            }
+        });
+
+        findViewById(R.id.llApiLine).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                ArrayList<String> apiLines = Hawk.get(HawkConfig.API_LINE_LIST, new ArrayList<String>());
+                if (apiLines.isEmpty()) {
+                    Toast.makeText(mContext, "线路列表为空", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                String current = Hawk.get(HawkConfig.API_URL, "");
+                int idx = 0;
+                for (int i = 0; i < apiLines.size(); i++) {
+                    if (current.equals(HistoryHelper.getApiLineUrl(apiLines.get(i)))) {
+                        idx = i;
+                        break;
+                    }
+                }
+                SelectDialog<String> dialog = new SelectDialog<>(mActivity);
+                dialog.setTip("线路选择");
+                dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<String>() {
+                    @Override
+                    public void click(String value, int pos) {
+                        String newApi = HistoryHelper.getApiLineUrl(value);
+                        String oldApi = Hawk.get(HawkConfig.API_URL, "");
+                        if (newApi.isEmpty()) {
+                            return;
+                        }
+                        Hawk.put(HawkConfig.API_URL, newApi);
+                        Hawk.put(HawkConfig.LIVE_API_URL, newApi);
+                        HistoryHelper.setLiveApiHistory(newApi);
+                        tvApi.setText(newApi);
+                        refreshApiLineText();
+                        dialog.dismiss();
+                        if (!oldApi.equals(newApi)) {
+                            restartAppAfterConfigChanged();
+                        }
+                    }
+
+                    @Override
+                    public String getDisplay(String val) {
+                        return HistoryHelper.getApiLineName(val);
+                    }
+                }, SelectDialogAdapter.stringDiff, apiLines, idx);
                 dialog.show();
             }
         });
@@ -507,7 +608,7 @@ public class ModelSettingFragment extends BaseLazyFragment {
             @Override
             public void onClick(View v) {
                 FastClickCheckUtil.check(v);
-                int defaultPos = Hawk.get(HawkConfig.HOME_REC, 0);
+                int defaultPos = Hawk.get(HawkConfig.HOME_REC, HawkConfig.DEFAULT_HOME_REC);
                 ArrayList<Integer> types = new ArrayList<>();
                 types.add(0);
                 types.add(1);
@@ -629,8 +730,8 @@ public class ModelSettingFragment extends BaseLazyFragment {
             @Override
             public void onClick(View v) {
                 FastClickCheckUtil.check(v);
-                Hawk.put(HawkConfig.FAST_SEARCH_MODE, !Hawk.get(HawkConfig.FAST_SEARCH_MODE, false));
-                tvFastSearchText.setText(Hawk.get(HawkConfig.FAST_SEARCH_MODE, false) ? "开启" : "关闭");
+                Hawk.put(HawkConfig.FAST_SEARCH_MODE, !Hawk.get(HawkConfig.FAST_SEARCH_MODE, true));
+                tvFastSearchText.setText(Hawk.get(HawkConfig.FAST_SEARCH_MODE, true) ? "开启" : "关闭");
             }
         });
         findViewById(R.id.m3u8Ad).setOnClickListener(new View.OnClickListener() {
@@ -640,6 +741,38 @@ public class ModelSettingFragment extends BaseLazyFragment {
                 boolean is_purify=Hawk.get(HawkConfig.M3U8_PURIFY, false);
                 Hawk.put(HawkConfig.M3U8_PURIFY, !is_purify);
                 tvm3u8AdText.setText(!is_purify ? "开启" : "关闭");
+            }
+        });
+        findViewById(R.id.danmuOpen).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                FastClickCheckUtil.check(v);
+                boolean open = !DanmuHelper.isOpen();
+                DanmuHelper.setOpen(open);
+                tvDanmuOpenText.setText(open ? "开启" : "关闭");
+            }
+        });
+        findViewById(R.id.danmuApi).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                FastClickCheckUtil.check(v);
+                DanmuApiDialog dialog = new DanmuApiDialog(mActivity);
+                dialog.setOnListener(new DanmuApiDialog.OnListener() {
+                    @Override
+                    public void onChange(String api) {
+                        refreshDanmuApiText();
+                    }
+                });
+                dialog.show();
+            }
+        });
+        findViewById(R.id.autoSwitchLine).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                FastClickCheckUtil.check(v);
+                boolean enable = !Hawk.get(HawkConfig.AUTO_SWITCH_LINE, true);
+                Hawk.put(HawkConfig.AUTO_SWITCH_LINE, enable);
+                tvAutoSwitchLineText.setText(enable ? "开启" : "关闭");
             }
         });
         findViewById(R.id.llHomeRecStyle).setOnClickListener(new View.OnClickListener() {
@@ -722,30 +855,261 @@ public class ModelSettingFragment extends BaseLazyFragment {
         findViewById(R.id.llClearCache).setOnClickListener((view -> onClickClearCache(view)));
     }
 
+    private void restartAppAfterConfigChanged() {
+        Toast.makeText(mContext, "配置已切换,即将重新加载!", Toast.LENGTH_SHORT).show();
+        new Handler().postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (mActivity != null && !mActivity.isFinishing()) {
+                    mActivity.onBackPressed();
+                }
+            }
+        }, 2500);
+    }
+
+    private void restartAppAfterCacheCleared() {
+        Toast.makeText(mContext, "缓存已清空,即将回到主页!", Toast.LENGTH_LONG).show();
+        new Handler().postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                restartApp();
+            }
+        }, 2500);
+    }
+
+    private void refreshApiLineText() {
+        if (tvApiLine == null) return;
+        ArrayList<String> apiLines = Hawk.get(HawkConfig.API_LINE_LIST, new ArrayList<String>());
+        String current = Hawk.get(HawkConfig.API_URL, "");
+        boolean showLine = HistoryHelper.isApiLineUrl(current);
+        if (llApiLine != null) {
+            llApiLine.setVisibility(showLine ? View.VISIBLE : View.GONE);
+        }
+        updateApiRowWeight(showLine);
+        String lineName = "";
+        if (showLine) {
+            for (String apiLine : apiLines) {
+                if (current.equals(HistoryHelper.getApiLineUrl(apiLine))) {
+                    lineName = HistoryHelper.getApiLineName(apiLine);
+                    break;
+                }
+            }
+        }
+        tvApiLine.setText(lineName);
+    }
+
+    private void refreshDanmuApiText() {
+        if (tvDanmuApiText == null) return;
+        if (DanmakuApi.isUseDefault()) {
+            tvDanmuApiText.setText("默认");
+            return;
+        }
+        String custom = Hawk.get(HawkConfig.DANMU_API, "");
+        if (!custom.isEmpty()) {
+            tvDanmuApiText.setText("自定义");
+            return;
+        }
+        String config = ApiConfig.get().getDanmaku();
+        tvDanmuApiText.setText(config.isEmpty() ? "默认" : "接口");
+    }
+
+    private void updateApiRowWeight(boolean showLine) {
+        if (llApi == null) return;
+        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) llApi.getLayoutParams();
+        params.weight = showLine ? 1.0f : 3.08f;
+        llApi.setLayoutParams(params);
+        if (llApiHistory != null) {
+            LinearLayout.LayoutParams historyParams = (LinearLayout.LayoutParams) llApiHistory.getLayoutParams();
+            int margin = showLine ? getResources().getDimensionPixelSize(R.dimen.vs_5) : 0;
+            historyParams.rightMargin = margin;
+            historyParams.setMarginEnd(margin);
+            llApiHistory.setLayoutParams(historyParams);
+        }
+    }
+
+    private void restartApp() {
+        if (mContext == null) return;
+        Intent intent = mContext.getPackageManager().getLaunchIntentForPackage(mContext.getPackageName());
+        if (intent != null) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            startActivity(intent);
+            System.exit(0);
+        }
+    }
+
     private void onClickIjkCachePlay(View v) {
         FastClickCheckUtil.check(v);
         Hawk.put(HawkConfig.IJK_CACHE_PLAY, !Hawk.get(HawkConfig.IJK_CACHE_PLAY, false));
         tvIjkCachePlay.setText(Hawk.get(HawkConfig.IJK_CACHE_PLAY, false) ? "开启" : "关闭");
     }
 
+    private void openLocalConfig(boolean live) {
+        selectLocalLive = live;
+        if (!XXPermissions.isGranted(mContext, Permission.Group.STORAGE)) {
+            Toast.makeText(getContext(), "请选择文件前需要先授予存储权限", Toast.LENGTH_SHORT).show();
+            XXPermissions.with(mActivity)
+                    .permission(Permission.Group.STORAGE)
+                    .request(new OnPermissionCallback() {
+                        @Override
+                        public void onGranted(List<String> permissions, boolean all) {
+                            if (all) {
+                                Toast.makeText(getContext(), "已获得存储权限", Toast.LENGTH_SHORT).show();
+                                openLocalFileActivity(selectLocalLive);
+                            }
+                        }
+
+                        @Override
+                        public void onDenied(List<String> permissions, boolean never) {
+                            if (never) {
+                                Toast.makeText(getContext(), "获取存储权限失败,请在系统设置中开启", Toast.LENGTH_SHORT).show();
+                                XXPermissions.startPermissionActivity(mActivity, permissions);
+                            } else {
+                                Toast.makeText(getContext(), "获取存储权限失败", Toast.LENGTH_SHORT).show();
+                            }
+                        }
+                    });
+            return;
+        }
+        openLocalFileActivity(live);
+    }
+
+    private void openLocalFileActivity(boolean live) {
+        Intent intent = new Intent(mContext, LocalFileActivity.class);
+        intent.putExtra(LocalFileActivity.EXTRA_LIVE, live);
+        startActivityForResult(intent, REQUEST_LOCAL_CONFIG);
+    }
+
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_LOCAL_CONFIG || resultCode != android.app.Activity.RESULT_OK || data == null || data.getData() == null) {
+            return;
+        }
+        String api = localConfigToApi(data.getData());
+        if (api == null || api.isEmpty()) {
+            Toast.makeText(getContext(), "读取本地配置失败", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (apiDialog != null) {
+            apiDialog.setLocalApi(api, selectLocalLive);
+        }
+    }
+
+    private String localConfigToApi(Uri uri) {
+        String path = getPathFromUri(uri);
+        if (path == null || path.isEmpty()) {
+            path = copyUriToLocalConfig(uri);
+        }
+        if (path == null || path.isEmpty()) {
+            return "";
+        }
+        String storageRoot = Environment.getExternalStorageDirectory().getAbsolutePath();
+        if (path.startsWith(storageRoot)) {
+            return "clan://localhost/" + path.substring(storageRoot.length()).replaceFirst("^/+", "");
+        }
+        path = copyUriToLocalConfig(uri);
+        if (path != null && path.startsWith(storageRoot)) {
+            return "clan://localhost/" + path.substring(storageRoot.length()).replaceFirst("^/+", "");
+        }
+        return "";
+    }
+
+    private String getPathFromUri(Uri uri) {
+        try {
+            if ("file".equalsIgnoreCase(uri.getScheme())) {
+                return uri.getPath();
+            }
+            if (DocumentsContract.isDocumentUri(mContext, uri)) {
+                String docId = DocumentsContract.getDocumentId(uri);
+                if ("com.android.externalstorage.documents".equals(uri.getAuthority())) {
+                    String[] split = docId.split(":");
+                    if (split.length > 1 && "primary".equalsIgnoreCase(split[0])) {
+                        return Environment.getExternalStorageDirectory().getAbsolutePath() + "/" + split[1];
+                    }
+                }
+                if ("com.android.providers.downloads.documents".equals(uri.getAuthority()) && docId.startsWith("raw:")) {
+                    return docId.substring(4);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private String copyUriToLocalConfig(Uri uri) {
+        InputStream input = null;
+        FileOutputStream output = null;
+        try {
+            input = mContext.getContentResolver().openInputStream(uri);
+            if (input == null) return "";
+            File dir = new File(FileUtils.getExternalCachePath(), "config");
+            if (!dir.exists()) dir.mkdirs();
+            File file = new File(dir, getDisplayName(uri));
+            output = new FileOutputStream(file);
+            byte[] buffer = new byte[8192];
+            int length;
+            while ((length = input.read(buffer)) != -1) {
+                output.write(buffer, 0, length);
+            }
+            return file.getAbsolutePath();
+        } catch (Throwable th) {
+            th.printStackTrace();
+            return "";
+        } finally {
+            try {
+                if (output != null) output.close();
+            } catch (Throwable ignored) {
+            }
+            try {
+                if (input != null) input.close();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private String getDisplayName(Uri uri) {
+        String name = "local_config.json";
+        Cursor cursor = null;
+        try {
+            cursor = mContext.getContentResolver().query(uri, null, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (index >= 0) {
+                    String displayName = cursor.getString(index);
+                    if (displayName != null && !displayName.isEmpty()) {
+                        name = displayName;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return name;
+    }
+
     private void onClickClearCache(View v) {
         FastClickCheckUtil.check(v);
         String cachePath = FileUtils.getCachePath();
         File cacheDir = new File(cachePath);
-        String cspCachePath = FileUtils.getFilePath()+"/csp/";
-        File cspCacheDir = new File(cspCachePath);
-        if (!cacheDir.exists() && !cspCacheDir.exists()) return;
         new Thread(() -> {
             try {
+                ApiConfig.get().clearSpiderCache();
                 if(cacheDir.exists())FileUtils.cleanDirectory(cacheDir);
-                if(cspCacheDir.exists()){
-                    FileUtils.cleanDirectory(cspCacheDir);
-                }
+                FileUtils.clearSpiderCacheFiles();
             } catch (Exception e) {
                 e.printStackTrace();
+            } finally {
+                if (mActivity != null) {
+                    mActivity.runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            restartAppAfterCacheCleared();
+                        }
+                    });
+                }
             }
         }).start();
-        Toast.makeText(getContext(), "播放&JAR缓存已清空", Toast.LENGTH_LONG).show();
     }
 
 

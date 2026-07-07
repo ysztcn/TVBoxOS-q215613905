@@ -11,6 +11,7 @@ import android.view.SurfaceHolder;
 
 import java.util.Map;
 
+import xyz.doikki.videoplayer.exo.ExoMediaSourceHelper;
 import xyz.doikki.videoplayer.util.PlayerUtils;
 
 /**
@@ -46,6 +47,7 @@ public class AndroidMediaPlayer extends AbstractPlayer implements MediaPlayer.On
     @Override
     public void setDataSource(String path, Map<String, String> headers) {
         try {
+            if (headers != null) headers.remove(ExoMediaSourceHelper.HEADER_FORMAT);
             mMediaPlayer.setDataSource(mAppContext, Uri.parse(path), headers);
         } catch (Exception e) {
             mPlayerEventListener.onError();
@@ -115,7 +117,7 @@ public class AndroidMediaPlayer extends AbstractPlayer implements MediaPlayer.On
     @Override
     public void seekTo(long time) {
         try {
-            mMediaPlayer.seekTo((int) time);
+            mMediaPlayer.seekTo(PlayerUtils.safeTimeMs(time));
         } catch (IllegalStateException e) {
             mPlayerEventListener.onError();
         }

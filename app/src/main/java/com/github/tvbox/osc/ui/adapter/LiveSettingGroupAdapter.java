@@ -28,7 +28,9 @@ public class LiveSettingGroupAdapter extends BaseQuickAdapter<LiveSettingGroup, 
     protected void convert(BaseViewHolder holder, LiveSettingGroup group) {
         TextView tvGroupName = holder.getView(R.id.tvSettingGroupName);
         tvGroupName.setText(group.getGroupName());
+        tvGroupName.setSelected(true);
         int groupIndex = group.getGroupIndex();
+        holder.itemView.setSelected(groupIndex == selectedGroupIndex);
         if (groupIndex == selectedGroupIndex && groupIndex != focusedGroupIndex) {
             tvGroupName.setTextColor(mContext.getResources().getColor(R.color.color_1890FF));
         } else {
@@ -38,11 +40,13 @@ public class LiveSettingGroupAdapter extends BaseQuickAdapter<LiveSettingGroup, 
 
     public void setSelectedGroupIndex(int selectedGroupIndex) {
         int preSelectedGroupIndex = this.selectedGroupIndex;
-        this.selectedGroupIndex = selectedGroupIndex;
-        if (preSelectedGroupIndex != -1)
-            notifyItemChanged(preSelectedGroupIndex);
-        if (this.selectedGroupIndex != -1)
-            notifyItemChanged(this.selectedGroupIndex);
+        this.selectedGroupIndex = findPositionByGroupIndex(selectedGroupIndex) != -1 ? selectedGroupIndex : -1;
+        int preSelectedPosition = findPositionByGroupIndex(preSelectedGroupIndex);
+        if (preSelectedPosition != -1)
+            notifyItemChanged(preSelectedPosition);
+        int selectedPosition = findPositionByGroupIndex(this.selectedGroupIndex);
+        if (selectedPosition != -1)
+            notifyItemChanged(selectedPosition);
     }
 
     public int getSelectedGroupIndex() {
@@ -50,10 +54,21 @@ public class LiveSettingGroupAdapter extends BaseQuickAdapter<LiveSettingGroup, 
     }
 
     public void setFocusedGroupIndex(int focusedGroupIndex) {
-        this.focusedGroupIndex = focusedGroupIndex;
-        if (this.focusedGroupIndex != -1)
-            notifyItemChanged(this.focusedGroupIndex);
-        else if (this.selectedGroupIndex != -1)
-            notifyItemChanged(this.selectedGroupIndex);
+        this.focusedGroupIndex = findPositionByGroupIndex(focusedGroupIndex) != -1 ? focusedGroupIndex : -1;
+        int focusedPosition = findPositionByGroupIndex(this.focusedGroupIndex);
+        if (focusedPosition != -1)
+            notifyItemChanged(focusedPosition);
+        else {
+            int selectedPosition = findPositionByGroupIndex(this.selectedGroupIndex);
+            if (selectedPosition != -1)
+                notifyItemChanged(selectedPosition);
+        }
+    }
+
+    public int findPositionByGroupIndex(int groupIndex) {
+        for (int i = 0; i < getData().size(); i++) {
+            if (getData().get(i).getGroupIndex() == groupIndex) return i;
+        }
+        return -1;
     }
 }

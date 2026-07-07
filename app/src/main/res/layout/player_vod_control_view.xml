@@ -170,12 +170,20 @@
         android:visibility="gone"
         tools:visibility="visible">
 
-        <LinearLayout
-            android:id="@+id/play_btn_group"
+        <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="@dimen/vs_10"
-            android:orientation="horizontal">
+            android:fillViewport="false"
+            android:focusable="false"
+            android:focusableInTouchMode="false"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/play_btn_group"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
 
             <TextView
                 android:singleLine="true"
@@ -296,7 +304,7 @@
                 android:background="@drawable/button_dialog_main"
                 android:focusable="true"
                 android:padding="@dimen/vs_10"
-                android:text="硬解码"
+                android:text="硬解"
                 android:textColor="@android:color/white"
                 android:textSize="@dimen/ts_20" />
 
@@ -384,6 +392,34 @@
                 android:textSize="@dimen/ts_20"/>
 
             <TextView
+                android:id="@+id/danmu_setting"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/vs_5"
+                android:layout_marginRight="@dimen/vs_5"
+                android:background="@drawable/button_dialog_main"
+                android:focusable="true"
+                android:padding="@dimen/vs_10"
+                android:text="弹幕"
+                android:textColor="@android:color/white"
+                android:textSize="@dimen/ts_20"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/danmu_search_ui"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/vs_5"
+                android:layout_marginRight="@dimen/vs_5"
+                android:background="@drawable/button_dialog_main"
+                android:focusable="true"
+                android:padding="@dimen/vs_10"
+                android:text="弹幕搜索"
+                android:textColor="@android:color/white"
+                android:textSize="@dimen/ts_20"
+                android:visibility="gone"/>
+
+            <TextView
                 android:id="@+id/landscape_portrait"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -410,7 +446,9 @@
                 android:textColor="@android:color/white"
                 android:textSize="@dimen/ts_20"/>
 
-        </LinearLayout>
+            </LinearLayout>
+
+        </HorizontalScrollView>
 
 
         <LinearLayout
@@ -645,7 +683,8 @@
         android:id="@+id/tv_back"
         android:layout_width="@dimen/vs_80"
         android:layout_height="@dimen/vs_80"
-        android:layout_gravity="left|center"
+        android:layout_gravity="left|center_vertical"
+        android:layout_marginBottom="@dimen/vs_30"
         android:clickable="true"
         android:focusable="true"
         android:paddingHorizontal="@dimen/vs_20"
@@ -657,7 +696,8 @@
         android:id="@+id/tv_lock"
         android:layout_width="@dimen/vs_80"
         android:layout_height="@dimen/vs_80"
-        android:layout_gravity="right|center"
+        android:layout_gravity="right|center_vertical"
+        android:layout_marginBottom="@dimen/vs_30"
         android:clickable="true"
         android:focusable="true"
         android:paddingHorizontal="@dimen/vs_20"

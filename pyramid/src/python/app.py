@@ -8,12 +8,14 @@ import json
 import sys
 sys.dont_write_bytecode = True
 
+PLUGIN_DOWNLOAD_TIMEOUT = 20
+
 def createFile(file_path):
     if os.path.exists(file_path) is False:
         os.makedirs(file_path)
 
 def redirectResponse(tUrl):
-  rsp = requests.get(tUrl, allow_redirects=False,verify = False)
+  rsp = requests.get(tUrl, allow_redirects=False, verify=False, timeout=PLUGIN_DOWNLOAD_TIMEOUT)
   if 'Location' in rsp.headers:
     return redirectResponse(rsp.headers['Location'])
   else:
@@ -47,6 +49,15 @@ def downloadPlugin(basePath,url):
     sParam[name] = paramList[0]
     return pyName
 
+def registerPluginAlias(alias,fileName):
+    if alias == None or alias == '':
+        return
+    name = fileName.split('/')[-1].split('.')[0]
+    sPath = gParam['SpiderPath']
+    sPath[alias] = fileName
+    sParam = gParam['SpiderParam']
+    sParam[alias] = sParam[name] if name in sParam.keys() else ''
+
 def loadFromDisk(fileName):
     name = fileName.split('/')[-1].split('.')[0]
     spList = gParam['SpiderList']
@@ -58,6 +69,20 @@ def loadFromDisk(fileName):
 def str2json(content):
     return json.loads(content)
 
+def getDependenceList(ru):
+    get_dependence = getattr(ru, 'getDependence', None)
+    if callable(get_dependence):
+        result = get_dependence()
+        return result if result is not None else []
+    return []
+
+def setExtendInfo(ru, extend):
+    setter = getattr(ru, 'setExtendInfo', None)
+    if callable(setter):
+        setter(extend)
+    else:
+        setattr(ru, 'extend', extend)
+
 gParam = {
     "SpiderList":{},
     "SpiderPath":{},
@@ -65,8 +90,7 @@ gParam = {
 }
 
 def getDependence(ru):
-    result = ru.getDependence()
-    return result
+    return getDependenceList(ru)
 
 def getName(ru):
     result = ru.getName()
@@ -77,16 +101,17 @@ def init(ru,extend):
     spList = gParam['SpiderList']
     sPath = gParam['SpiderPath']
     sParam = gParam['SpiderParam']
-    for key in ru.getDependence():
+    for key in getDependenceList(ru):
         sp = None
         if key in spList.keys():
             sp = spList[key]
         elif key in sPath.keys():
             sp = loadFromDisk(sPath[key])
         if sp != None:
-            sp.setExtendInfo(sParam[key])
+            setExtendInfo(sp, sParam[key])
             spoList.append(sp)
-    ru.init(extend)
+    setExtendInfo(ru, extend)
+    ru.init(spoList if len(spoList) > 0 else extend)
 
 def homeContent(ru,filter):
     result = ru.homeContent(filter)
@@ -125,6 +150,9 @@ def searchContent(ru,key,quick):
 def localProxy(ru,param):
     result = ru.localProxy(str2json(param))
     return result
+
+def destroy(ru):
+    ru.destroy()
 
 def run():
     pass

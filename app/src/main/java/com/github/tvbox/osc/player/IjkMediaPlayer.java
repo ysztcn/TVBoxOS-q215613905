@@ -23,6 +23,7 @@ import java.util.Map;
 import tv.danmaku.ijk.media.player.IMediaPlayer;
 import tv.danmaku.ijk.media.player.misc.ITrackInfo;
 import tv.danmaku.ijk.media.player.misc.IjkTrackInfo;
+import xyz.doikki.videoplayer.exo.ExoMediaSourceHelper;
 import xyz.doikki.videoplayer.ijk.IjkPlayer;
 
 public class IjkMediaPlayer extends IjkPlayer {
@@ -30,6 +31,8 @@ public class IjkMediaPlayer extends IjkPlayer {
     private IJKCode codec = null;
     protected String currentPlayPath;
     private static AudioTrackMemory memory;
+    private static final String DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36";
+    private static final String DEFAULT_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/json;q=0.9";
 
     public IjkMediaPlayer(Context context, IJKCode codec) {
         super(context);
@@ -68,7 +71,7 @@ public class IjkMediaPlayer extends IjkPlayer {
         mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "dns_cache_timeout", -1);
         mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT,"safe",0);
 
-        if(Hawk.get(HawkConfig.PLAYER_IS_LIVE)){
+        if(Hawk.get(HawkConfig.PLAYER_IS_LIVE, false)){
             LOG.i("echo-type-直播");
             mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_PLAYER, "max_cached_duration", 300);
             mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "flush_packets", 1);
@@ -164,26 +167,47 @@ public class IjkMediaPlayer extends IjkPlayer {
     }
 
     private void setDataSourceHeader(Map<String, String> headers) {
+        LinkedHashMap<String, String> playHeaders = new LinkedHashMap<>();
+        String userAgent = null;
+        boolean hasAccept = false;
         if (headers != null && !headers.isEmpty()) {
-            String userAgent = headers.get("User-Agent");
-            if (!TextUtils.isEmpty(userAgent)) {
-                mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "user_agent", userAgent);
-                // 移除header中的User-Agent，防止重复
-                headers.remove("User-Agent");
-            }
-            if (headers.size() > 0) {
-                StringBuilder sb = new StringBuilder();
-                for (Map.Entry<String, String> entry : headers.entrySet()) {
-                    String value = entry.getValue();
-                    if (!TextUtils.isEmpty(value)) {
-                        sb.append(entry.getKey());
-                        sb.append(": ");
-                        sb.append(value);
-                        sb.append("\r\n");
-                    }
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                String key = entry.getKey();
+                String value = entry.getValue();
+                if (TextUtils.isEmpty(key) || TextUtils.isEmpty(value)) {
+                    continue;
                 }
-                mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "headers", sb.toString());
+                if (ExoMediaSourceHelper.HEADER_FORMAT.equalsIgnoreCase(key)) {
+                    continue;
+                }
+                if ("User-Agent".equalsIgnoreCase(key)) {
+                    userAgent = value.trim();
+                } else {
+                    if ("Accept".equalsIgnoreCase(key)) {
+                        hasAccept = true;
+                    }
+                    playHeaders.put(key, value.trim());
+                }
             }
+        }
+        if (TextUtils.isEmpty(userAgent)) {
+            userAgent = DEFAULT_USER_AGENT;
+        }
+        if (!hasAccept) {
+            playHeaders.put("Accept", DEFAULT_ACCEPT);
+        }
+        if (!TextUtils.isEmpty(userAgent)) {
+            mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "user_agent", userAgent);
+        }
+        if (playHeaders.size() > 0) {
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<String, String> entry : playHeaders.entrySet()) {
+                sb.append(entry.getKey());
+                sb.append(": ");
+                sb.append(entry.getValue());
+                sb.append("\r\n");
+            }
+            mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "headers", sb.toString());
         }
     }
 
@@ -201,6 +225,10 @@ public class IjkMediaPlayer extends IjkPlayer {
                 a.language = info.getLanguage();
                 if(name.startsWith("aac"))a.language="中文";
                 a.name = name;
+                String language = getFriendlyLanguage(a.language, info.getInfoInline());
+                a.language = language;
+                a.name = buildDisplayName("\u97f3\u8f68", data.getAudio().size() + 1, language, name);
+                a.trackId = index;
                 a.index = index;
                 a.selected = index == audioSelected;
                 // 如果需要，还可以检查轨道的描述或标题以获取更多信息
@@ -210,6 +238,10 @@ public class IjkMediaPlayer extends IjkPlayer {
                 TrackInfoBean t = new TrackInfoBean();
                 t.name = info.getInfoInline();
                 t.language = info.getLanguage();
+                String language = getFriendlyLanguage(t.language, t.name);
+                t.language = language;
+                t.name = buildDisplayName("\u5b57\u5e55", data.getSubtitle().size() + 1, language, "");
+                t.trackId = index;
                 t.index = index;
                 t.selected = index == subtitleSelected;
                 data.addSubtitle(t);
@@ -220,9 +252,48 @@ public class IjkMediaPlayer extends IjkPlayer {
     }
     // 处理音轨名称格式
     private String processAudioName(String rawName) {
+        if (rawName == null) return "";
         return rawName.replace("AUDIO,", "")
                 .replace("N/A,", "")
-                .replace(" ", "");
+                .replace(" ", "")
+                .replaceAll("^,+|,+$", "")
+                .replace(",", " / ");
+    }
+
+    private String getFriendlyLanguage(String language, String rawInfo) {
+        String text = ((language == null ? "" : language) + " " + (rawInfo == null ? "" : rawInfo)).toLowerCase();
+        if (text.contains("yue") || text.contains("cantonese") || text.contains("\u7ca4") || text.contains("\u5e7f\u4e1c")) {
+            return "\u7ca4\u8bed";
+        }
+        if (text.contains("zh") || text.contains("chi") || text.contains("zho") || text.contains("chs")
+                || text.contains("cht") || text.contains("cmn") || text.contains("\u4e2d")
+                || text.contains("\u56fd\u8bed") || text.contains("\u666e\u901a\u8bdd")) {
+            return "\u56fd\u8bed";
+        }
+        if (text.contains("en") || text.contains("eng") || text.contains("english") || text.contains("\u82f1")) {
+            return "\u82f1\u8bed";
+        }
+        if (text.contains("ja") || text.contains("jpn") || text.contains("japanese") || text.contains("\u65e5")) {
+            return "\u65e5\u8bed";
+        }
+        if (text.contains("ko") || text.contains("kor") || text.contains("korean") || text.contains("\u97e9")) {
+            return "\u97e9\u8bed";
+        }
+        if (text.contains("tha") || text.contains("thai") || text.contains("th")) {
+            return "\u6cf0\u8bed";
+        }
+        return "";
+    }
+
+    private String buildDisplayName(String prefix, int number, String language, String detail) {
+        StringBuilder builder = new StringBuilder(prefix).append(" ").append(number);
+        if (language != null && !language.isEmpty()) {
+            builder.append(" - ").append(language);
+        }
+        if (detail != null && !detail.isEmpty()) {
+            builder.append(" ").append(detail);
+        }
+        return builder.toString();
     }
 
     public void setTrack(int trackIndex) {

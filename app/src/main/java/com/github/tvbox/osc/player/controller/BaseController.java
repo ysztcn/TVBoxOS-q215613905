@@ -118,6 +118,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
         super.onPlayStateChanged(playState);
         switch (playState) {
             case VideoView.STATE_IDLE:
+                mPauseRoot.setVisibility(GONE);
                 mLoading.setVisibility(GONE);
                 break;
             case VideoView.STATE_PLAYING:
@@ -131,10 +132,12 @@ public abstract class BaseController extends BaseVideoController implements Gest
             case VideoView.STATE_PREPARED:
             case VideoView.STATE_ERROR:
             case VideoView.STATE_BUFFERED:
+                mPauseRoot.setVisibility(GONE);
                 mLoading.setVisibility(GONE);
                 break;
             case VideoView.STATE_PREPARING:
             case VideoView.STATE_BUFFERING:
+                mPauseRoot.setVisibility(GONE);
                 mLoading.setVisibility(VISIBLE);
                 break;
             case VideoView.STATE_PLAYBACK_COMPLETED:
@@ -170,6 +173,12 @@ public abstract class BaseController extends BaseVideoController implements Gest
      */
     public void setDoubleTapTogglePlayEnabled(boolean enabled) {
         mIsDoubleTapTogglePlayEnabled = enabled;
+    }
+
+    public void hidePauseRoot() {
+        if (mPauseRoot != null) {
+            mPauseRoot.setVisibility(GONE);
+        }
     }
 
     @Override
@@ -299,8 +308,8 @@ public abstract class BaseController extends BaseVideoController implements Gest
     protected void slideToChangePosition(float deltaX) {
         deltaX = -deltaX;
         int width = getMeasuredWidth();
-        int duration = (int) mControlWrapper.getDuration();
-        int currentPosition = (int) mControlWrapper.getCurrentPosition();
+        int duration = PlayerUtils.safeTimeMs(mControlWrapper.getDuration());
+        int currentPosition = PlayerUtils.safeTimeMs(mControlWrapper.getCurrentPosition());
         int position = (int) (deltaX / width * 120000 + currentPosition);
         if (position > duration) position = duration;
         if (position < 0) position = 0;

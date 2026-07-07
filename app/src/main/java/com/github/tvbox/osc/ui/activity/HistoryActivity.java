@@ -128,11 +128,12 @@ public class HistoryActivity extends BaseActivity {
                         bundle.putString("sourceKey", vodInfo.sourceKey);
                         SourceBean sourceBean = ApiConfig.get().getSource(vodInfo.sourceKey);
                         if(sourceBean!=null){
+                            bundle.putString("title", vodInfo.name);
                             bundle.putString("picture", vodInfo.pic);
                             jumpActivity(DetailActivity.class, bundle);
                         }else {
                             bundle.putString("title", vodInfo.name);
-                            if(Hawk.get(HawkConfig.FAST_SEARCH_MODE, false)){
+                            if(Hawk.get(HawkConfig.FAST_SEARCH_MODE, true)){
                                 jumpActivity(FastSearchActivity.class, bundle);
                             }else {
                                 jumpActivity(SearchActivity.class, bundle);

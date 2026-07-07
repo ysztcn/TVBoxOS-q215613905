@@ -1,19 +1,14 @@
-// 文件: app/src/python/java/com/github/catvod/crawler/python/PyLoader.java
 package com.github.catvod.crawler;
 
-import android.Manifest;
-import android.content.pm.PackageManager;
 import android.util.Log;
-
-import androidx.core.content.ContextCompat;
 
 import com.github.catvod.crawler.python.IPyLoader;
 import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.util.LOG;
-import com.github.tvbox.osc.util.MD5;
 import com.undcover.freedom.pyramid.PythonLoader;
 import com.undcover.freedom.pyramid.PythonSpider;
 import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -30,6 +25,9 @@ public class pyLoader implements IPyLoader {
     @Override
     public void clear() {
         spiders.clear();
+        pythonLoader.clear();
+        lastConfig = null;
+        recentPyKey = null;
     }
 
     @Override
@@ -41,10 +39,10 @@ public class pyLoader implements IPyLoader {
         }
     }
 
-    private String recentPyApi;
+    private String recentPyKey;
     @Override
-    public void setRecentPyKey(String pyApi) {
-        recentPyApi = pyApi;
+    public void setRecentPyKey(String key) {
+        recentPyKey = key;
     }
 
     @Override
@@ -54,12 +52,10 @@ public class pyLoader implements IPyLoader {
             return spiders.get(key);
         }
         try {
-            if (ContextCompat.checkSelfPermission(App.getInstance(), Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                Log.i("PyLoader", "无存储权限，终止执行");
-                return new SpiderNull();
-            }
             Log.i("PyLoader", "echo-getSpider url: " + getPyUrl(cls, ext));
             Spider sp = pythonLoader.getSpider(key, getPyUrl(cls, ext));
+            if (sp == null) return new SpiderNull();
+            if (sp instanceof SpiderNull) return sp;
 //            Log.i("PyLoader", "echo-getSpider homeContent: " + sp.homeContent(true));
             spiders.put(key, sp);
             Log.i("PyLoader", "echo-getSpider 加载spider: " + key);
@@ -72,10 +68,17 @@ public class pyLoader implements IPyLoader {
 
     @Override
     public Object[] proxyInvoke(Map<String, String> params){
-        if(recentPyApi==null)return null;
-        LOG.i("echo-recentPyApi" + recentPyApi);
+        return proxyInvoke(params, recentPyKey);
+    }
+
+    @Override
+    public Object[] proxyInvoke(Map<String, String> params, String key){
+        if(key==null || key.isEmpty())return null;
+        LOG.i("echo-recentPyKey" + key);
         try {
-            PythonSpider originalSpider = (PythonSpider) getSpider(MD5.string2MD5(recentPyApi), recentPyApi,"");
+            Spider spider = spiders.get(key);
+            if (!(spider instanceof PythonSpider)) return null;
+            PythonSpider originalSpider = (PythonSpider) spider;
             return originalSpider.proxyLocal(params);
         } catch (Throwable th) {
             LOG.i("echo-proxyInvoke_Throwable:---" + th.getMessage());
@@ -87,7 +90,7 @@ public class pyLoader implements IPyLoader {
     private String getPyUrl(String api, String ext) throws UnsupportedEncodingException {
         StringBuilder urlBuilder = new StringBuilder(api);
         if (!ext.isEmpty()) {
-//            ext= URLEncoder.encode(ext,"utf8");
+            ext = URLEncoder.encode(ext, "UTF-8");
             urlBuilder.append(api.contains("?") ? "&" : "?").append("extend=").append(ext);
         }
         return urlBuilder.toString();
